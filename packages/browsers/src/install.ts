@@ -6,7 +6,7 @@
 
 import assert from 'node:assert';
 import {spawnSync} from 'node:child_process';
-import {existsSync, readFileSync} from 'node:fs';
+import {existsSync} from 'node:fs';
 import {mkdir, unlink} from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -24,6 +24,7 @@ import {debug} from './debug.js';
 import {detectBrowserPlatform} from './detectPlatform.js';
 import {unpackArchive} from './fileUtil.js';
 import {downloadFile, getJSON, headHttpRequest} from './httpUtil.js';
+import {installDeps} from './install-deps.js';
 
 const debugInstall = debug('puppeteer:browsers:install');
 
@@ -213,47 +214,6 @@ export async function install(
   }
 }
 
-async function installDeps(installedBrowser: InstalledBrowser) {
-  if (
-    process.platform !== 'linux' ||
-    installedBrowser.platform !== BrowserPlatform.LINUX
-  ) {
-    return;
-  }
-  // Currently, only Debian-like deps are supported.
-  const depsPath = path.join(
-    path.dirname(installedBrowser.executablePath),
-    'deb.deps',
-  );
-  if (!existsSync(depsPath)) {
-    debugInstall(`deb.deps file was not found at ${depsPath}`);
-    return;
-  }
-  const data = readFileSync(depsPath, 'utf-8').split('\n').join(',');
-  if (process.getuid?.() !== 0) {
-    throw new Error('Installing system dependencies requires root privileges');
-  }
-  let result = spawnSync('apt-get', ['-v']);
-  if (result.status !== 0) {
-    throw new Error(
-      'Failed to install system dependencies: apt-get does not seem to be available',
-    );
-  }
-  debugInstall(`Trying to install dependencies: ${data}`);
-  result = spawnSync('apt-get', [
-    'satisfy',
-    '-y',
-    data,
-    '--no-install-recommends',
-  ]);
-  if (result.status !== 0) {
-    throw new Error(
-      `Failed to install system dependencies: status=${result.status},error=${result.error},stdout=${result.stdout.toString('utf8')},stderr=${result.stderr.toString('utf8')}`,
-    );
-  }
-  debugInstall(`Installed system dependencies ${data}`);
-}
-
 async function installUrl(
   url: URL,
   options: InstallOptions,
@@ -310,7 +270,9 @@ async function installUrl(
           `The browser folder (${outputPath}) exists but the executable (${installedBrowser.executablePath}) is missing`,
         );
       }
+
       await runSetup(installedBrowser);
+
       if (options.installDeps) {
         await installDeps(installedBrowser);
       }
