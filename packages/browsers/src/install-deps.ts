@@ -12,51 +12,66 @@ import {debug} from './debug.js';
 import {
   isLinuxDistroDebianLike,
   isLinux,
-  setUserToRoot,
   run,
+  getPackageManager,
+  isLinuxDistroFedoraLike,
 } from './platform.js';
 
 const debug_log = debug('puppeteer:browsers:install-deps');
 
 export async function installDeps(browser: InstalledBrowser): Promise<void> {
   if (!isLinux()) {
-    throw new Error('only Linux are supported');
+    throw new Error('only Linux are supported for now');
   }
 
-  if (isLinuxDistroDebianLike()) {
-    return await installDebianLikeDeps(browser);
+  if (isLinuxDistroDebianLike() || isLinuxDistroFedoraLike()) {
+    return await installLinuxDeps(browser);
   }
 
-  throw new Error('only Debian-like distributions are supported');
+  throw new Error(
+    'only Debian-like and Fedora-Like distributions are supported for now',
+  );
 }
 
-export async function installDebianLikeDeps(
+export async function installLinuxDeps(
   browser: InstalledBrowser,
 ): Promise<void> {
-  setUserToRoot();
+  const packageManager = getPackageManager();
 
-  const packageManager = run('apt-get', ['-v']);
-
-  if (packageManager.success) {
-    throw new Error('apt-get not found');
+  if (!packageManager) {
+    throw new Error(
+      'Failed to install system dependencies: no package manager found',
+    );
   }
 
-  const depsPath = path.join(path.dirname(browser.executablePath), 'deb.deps');
+  const check = run('command', ['-v', packageManager.name]);
+
+  if (!check.success) {
+    throw new Error(
+      `Failed to install system dependencies: ${packageManager.name} does not seem to be available`,
+    );
+  }
+
+  const depsPath = path.join(
+    path.dirname(browser.executablePath),
+    packageManager.deps.file,
+  );
 
   if (!existsSync(depsPath)) {
-    debug_log(`deb.deps file was not found at ${depsPath}`);
-    return;
+    throw new Error(
+      `Failed to install system dependencies: deps file was not found at ${depsPath}`,
+    );
   }
 
-  const deps = readFileSync(depsPath, 'utf-8').split('\n').join(',');
+  const deps = packageManager.deps.parse(readFileSync(depsPath, 'utf-8'));
 
-  debug_log(`Trying to install dependencies: ${deps}`);
+  debug_log(
+    `Trying to install with ${packageManager.name} these dependencies : ${deps}`,
+  );
 
-  const install = run('apt-get', [
-    'satisfy',
-    '-y',
+  const install = run(packageManager.name, [
+    ...packageManager.installCommand,
     deps,
-    '--no-install-recommends',
   ]);
 
   if (!install.success) {
@@ -65,5 +80,5 @@ export async function installDebianLikeDeps(
     );
   }
 
-  debug_log(`Installed system dependencies ${deps} successfully`);
+  debug_log(`Installed dependencies ${deps} successfully`);
 }

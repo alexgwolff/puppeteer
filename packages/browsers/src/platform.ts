@@ -26,13 +26,10 @@ export function isWindows(): boolean {
  * @returns true if the distribution is like the given one, false otherwise.
  */
 export function isLinuxDistroLike(distro: string): boolean {
-  const regex = new RegExp(
-    `(ID_LIKE)|(ID)="?[^"\n]*${distro}\\b[^"\n]*"`,
-    'gm',
-  );
-
+  const regex = new RegExp(`^(ID|ID_LIKE)=.*\\b${distro}\\b`, 'gm');
   try {
     const osRelease = readFileSync('/etc/os-release', 'utf-8');
+    console.log(osRelease);
     return regex.test(osRelease);
   } catch {
     return false;
@@ -40,41 +37,56 @@ export function isLinuxDistroLike(distro: string): boolean {
 }
 
 /*
- * Check if the current Linux distribution is Debian-like.
+ * Check if the current Linux distribution is Debian-like (.deb).
  */
 export function isLinuxDistroDebianLike(): boolean {
   return isLinuxDistroLike('debian');
 }
 
 /*
- * Check if the current Linux distribution is Fedora-like.
+ * Check if the current Linux distribution is Fedora-like (.rpm).
  */
 export function isLinuxDistroFedoraLike(): boolean {
   return isLinuxDistroLike('fedora');
 }
 
-export type PackageManager = {name: string; installCommand: string[]};
+export interface PackageManager {
+  name: string;
+  deps: {
+    file: string;
+    parse: (content: string) => string;
+  };
+  installCommand: string[];
+}
 
 export function getPackageManager(): PackageManager | undefined {
   if (isLinuxDistroDebianLike()) {
-    return {name: 'apt', installCommand: ['apt-get', 'install']};
-  } else if (isLinuxDistroFedoraLike()) {
-    return {name: 'dnf', installCommand: ['dnf', 'install']};
+    return {
+      name: 'apt-get',
+      deps: {
+        file: 'deb.deps',
+        parse: function (content: string) {
+          return content.split('\n').join(', ');
+        },
+      },
+      installCommand: ['install', 'satisfy', '-y', '--no-install-recommends'],
+    };
+  }
+
+  if (isLinuxDistroFedoraLike()) {
+    return {
+      name: 'dnf',
+      deps: {
+        file: 'rpm.deps',
+        parse: function (content: string) {
+          return content;
+        },
+      },
+      installCommand: ['install', '-y'],
+    };
   }
 
   return undefined;
-}
-
-export function setUserToRoot(): void {
-  if (process.getuid?.() !== 0) {
-    return;
-  }
-
-  try {
-    process.setuid?.(0);
-  } catch {
-    throw new Error('Installing system dependencies requires root privileges');
-  }
 }
 
 export function run(
@@ -87,13 +99,13 @@ export function run(
   stdout: string;
   success: boolean;
 } {
-  const result = spawnSync(command, args);
+  const result = spawnSync('sudo', [command, ...args]);
 
   return {
     error: result.error,
     status: result.status,
-    stderr: result.stderr.toString('utf8'),
-    stdout: result.stdout.toString('utf8'),
+    stderr: result.stderr?.toString('utf8'),
+    stdout: result.stdout?.toString('utf8'),
     success: result.status === 0,
   };
 }
